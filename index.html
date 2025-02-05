@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>サイコロゲーム</title>
+  <!-- スマホ対応のviewport設定 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* 全体リセット */
+    html, body {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    * {
+      box-sizing: inherit;
+    }
+
+    /* レイアウト・スタイル */
+    body {
+      font-family: sans-serif;
+      max-width: 600px; /* PCでもスマホでも程よい幅 */
+      margin: 0 auto;
+      padding: 1em;
+    }
+    h1, h2 {
+      margin-top: 0.5em;
+      margin-bottom: 0.5em;
+    }
+    label, button, input {
+      font-size: 1.2rem; /* スマホでも押しやすい大きめ文字 */
+    }
+    button {
+      padding: 0.5em 1em;
+      margin: 0.5em 0;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    /* サイコロの表示部分 */
+    #diceResults {
+      margin: 1em 0;
+    }
+    #diceResults span {
+      display: inline-block;
+      width: 40px;
+      height: 40px;
+      margin: 5px;
+      text-align: center;
+      line-height: 40px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-weight: bold;
+      background: #f5f5f5;
+      font-size: 1.2em;
+    }
+
+    /* 「クリア！」などのメッセージ */
+    #clearMessage {
+      font-size: 1.3rem;
+      font-weight: bold;
+      color: #d9534f; /* 赤系 */
+      margin: 1em 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>サイコロゲーム</h1>
+
+  <!-- サイコロ個数の設定＆ゲームスタート -->
+  <div>
+    <label for="diceCount">サイコロの数 (2～20): </label>
+    <input type="number" id="diceCount" min="2" max="20" value="3" />
+    <button id="startGame">スタート</button>
+  </div>
+  
+  <hr>
+
+  <!-- ゲーム画面部分 -->
+  <div id="gameArea" class="hidden">
+    <p id="statusMessage"></p>
+    
+    <!-- クリアメッセージ（初期は非表示） -->
+    <p id="clearMessage" class="hidden"></p>
+
+    <!-- 手動振るボタン & オートプレイボタン -->
+    <div>
+      <button id="rollDice">振る</button>
+      <button id="autoPlayButton">オートプレイ</button>
+    </div>
+    
+    <div id="diceResults"></div>
+    <p id="triesCount">試行回数: 0</p>
+  </div>
+
+  <hr>
+
+  <!-- ランキング表示 -->
+  <h2>ランキング</h2>
+  <div>
+    <ol id="rankingList"></ol>
+  </div>
+
+  <script>
+    // ---------------------------
+    //  ゲームロジック・変数定義
+    // ---------------------------
+
+    const diceCountInput  = document.getElementById("diceCount");
+    const startGameButton = document.getElementById("startGame");
+    const gameArea        = document.getElementById("gameArea");
+    const rollDiceButton  = document.getElementById("rollDice");
+    const autoPlayButton  = document.getElementById("autoPlayButton");
+    const statusMessage   = document.getElementById("statusMessage");
+    const diceResults     = document.getElementById("diceResults");
+    const triesCountElem  = document.getElementById("triesCount");
+    const rankingList     = document.getElementById("rankingList");
+    const clearMessage    = document.getElementById("clearMessage");
+
+    let diceCount    = 3;           // サイコロの数
+    let tries        = 0;           // 試行回数
+    let isGameActive = false;       // ゲーム中かどうか
+    let autoPlayInterval = null;    // オートプレイ用 setInterval
+    let autoPlaying  = false;       // オートプレイ中かどうか
+
+    // ---------------------------
+    //       ランキング処理
+    // ---------------------------
+    // ローカルストレージからランキング取得
+    // 形式: [{diceCount: 数値, tries: 数値, date: 'YYYY/MM/DD HH:mm'}, ...]
+    function loadRanking() {
+      const rankingData = localStorage.getItem("diceGameRanking");
+      return rankingData ? JSON.parse(rankingData) : [];
+    }
+
+    // ランキングに新しい記録を追加し、少ない試行回数順にソートして保存
+    function saveRanking(newRecord) {
+      const ranking = loadRanking();
+      ranking.push(newRecord);
+      ranking.sort((a, b) => a.tries - b.tries);
+      localStorage.setItem("diceGameRanking", JSON.stringify(ranking));
+    }
+
+    // ランキングを表示
+    function renderRanking() {
+      const ranking = loadRanking();
+      rankingList.innerHTML = "";
+
+      if (ranking.length === 0) {
+        rankingList.innerHTML = "<li>まだ記録がありません</li>";
+        return;
+      }
+
+      ranking.forEach((record, index) => {
+        const li = document.createElement("li");
+        li.textContent = `${index + 1}位: サイコロ ${record.diceCount}個, ` +
+                         `試行回数 ${record.tries}回, ` +
+                         `(${record.date})`;
+        rankingList.appendChild(li);
+      });
+    }
+
+    // ---------------------------
+    //       ゲーム関連処理
+    // ---------------------------
+    function startGame() {
+      diceCount = parseInt(diceCountInput.value, 10);
+      if (isNaN(diceCount) || diceCount < 2 || diceCount > 20) {
+        alert("サイコロの数は2〜20の間で入力してください。");
+        return;
+      }
+      tries        = 0;
+      isGameActive = true;
+      stopAutoPlay(); // もし既にオートプレイが動いていたら停止する
+
+      // 表示リセット
+      gameArea.classList.remove("hidden");
+      diceResults.innerHTML = "";
+      triesCountElem.textContent = `試行回数: ${tries}`;
+      clearMessage.classList.add("hidden");
+      clearMessage.textContent = "";
+
+      // 確率表示 + 説明
+      const totalPattern = Math.pow(6, diceCount);
+      statusMessage.innerHTML =
+        `サイコロ ${diceCount}個で挑戦中！ (確率 1/${totalPattern})<br>` +
+        `1のゾロ目が出たらクリア！`;
+    }
+
+    // サイコロを1回振る処理
+    function rollDice() {
+      // ゲーム中でない場合は何もしない
+      if (!isGameActive) return;
+
+      tries++;
+      triesCountElem.textContent = `試行回数: ${tries}`;
+
+      // サイコロの目をランダムに生成
+      const results = [];
+      for (let i = 0; i < diceCount; i++) {
+        const roll = Math.floor(Math.random() * 6) + 1;
+        results.push(roll);
+      }
+
+      // 結果を画面表示
+      diceResults.innerHTML = "";
+      results.forEach(num => {
+        const span = document.createElement("span");
+        span.textContent = num;
+        diceResults.appendChild(span);
+      });
+
+      // すべて1かどうか判定
+      const allOnes = results.every(num => num === 1);
+      if (allOnes) {
+        // ゲーム終了
+        isGameActive = false;
+        clearMessage.classList.remove("hidden");
+        clearMessage.textContent = `おめでとうございます！ ${tries}回でクリアです！`;
+
+        // ランキング記録
+        const now = new Date();
+        const dateString =
+          `${now.getFullYear()}/${
+            (now.getMonth()+1).toString().padStart(2, '0')
+          }/${
+            now.getDate().toString().padStart(2, '0')
+          } ${
+            now.getHours().toString().padStart(2, '0')
+          }:${
+            now.getMinutes().toString().padStart(2, '0')
+          }`;
+
+        const record = {
+          diceCount: diceCount,
+          tries: tries,
+          date: dateString
+        };
+        saveRanking(record);
+        renderRanking();
+
+        // オートプレイ中なら停止
+        if (autoPlaying) {
+          stopAutoPlay();
+        }
+      }
+    }
+
+    // ---------------------------
+    //     オートプレイ関連処理
+    // ---------------------------
+    function toggleAutoPlay() {
+      // ゲームが始まっていない or 終了していたらオートプレイはできない
+      if (!isGameActive) return;
+
+      if (!autoPlaying) {
+        // オートプレイ開始
+        autoPlaying = true;
+        autoPlayButton.textContent = "オートプレイ停止";
+        autoPlayInterval = setInterval(() => {
+          rollDice();
+        }, 50); // 連打相当の速さ。適宜調整。
+      } else {
+        // オートプレイ停止
+        stopAutoPlay();
+      }
+    }
+
+    function stopAutoPlay() {
+      if (autoPlayInterval) {
+        clearInterval(autoPlayInterval);
+      }
+      autoPlayInterval = null;
+      autoPlaying      = false;
+      autoPlayButton.textContent = "オートプレイ";
+    }
+
+    // ---------------------------
+    //        イベント設定
+    // ---------------------------
+    // スタートボタン
+    startGameButton.addEventListener("click", startGame);
+
+    // 手動で振るボタン
+    rollDiceButton.addEventListener("click", rollDice);
+
+    // オートプレイボタン
+    autoPlayButton.addEventListener("click", toggleAutoPlay);
+
+    // ページ読み込み時にランキングを表示
+    document.addEventListener("DOMContentLoaded", renderRanking);
+  </script>
+</body>
+</html>
